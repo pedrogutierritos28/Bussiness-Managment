@@ -161,6 +161,46 @@ def test_generate_scatter_with_secondary_column():
     assert len(figure.data) == 2
 
 
+def test_generate_scatter_simple_uses_row_label():
+
+    generator = ChartGenerator()
+
+    dataframe = create_test_dataframe()
+
+    figure = generator.generate(
+        dataframe,
+        "Salario",
+        "scatter"
+    )
+
+    assert figure is not None
+    # El eje X debe decir "Fila", no "index"/"Índice"
+    assert figure.layout.xaxis.title.text == "Fila"
+    # Numeración 1-based: la primera fila de datos es Fila 1
+    first_row = figure.data[0].x[0]
+    assert first_row == 1
+
+
+def test_generate_line_numeric_uses_row_label():
+
+    generator = ChartGenerator()
+
+    dataframe = create_test_dataframe()
+
+    figure = generator.generate(
+        dataframe,
+        "Salario",
+        "line"
+    )
+
+    assert figure is not None
+    # El eje X debe decir "Fila", no "index"
+    assert figure.layout.xaxis.title.text == "Fila"
+    # Numeración 1-based: la primera fila de datos es Fila 1
+    first_row = figure.data[0].x[0]
+    assert first_row == 1
+
+
 def test_generate_histogram_with_nbins():
 
     generator = ChartGenerator()
@@ -228,66 +268,3 @@ def test_infer_time_period_monthly():
     ).astype("datetime64[ns]")
 
     assert generator._infer_time_period(series) == "M"
-
-
-def test_generate_bar_with_aggregation():
-
-    generator = ChartGenerator()
-
-    dataframe = pd.DataFrame({
-        "Departamento": ["Ventas", "Sistemas", "Ventas", "Sistemas"],
-        "Salario": ["12,000", "15,000", "18,000", "14,000"]
-    })
-
-    figure = generator.generate(
-        dataframe,
-        "Salario",
-        "bar",
-        group_by="Departamento",
-        agg="sum"
-    )
-
-    assert figure is not None
-    assert len(figure.data) == 1
-
-
-def test_generate_pie_with_aggregation():
-
-    generator = ChartGenerator()
-
-    dataframe = pd.DataFrame({
-        "Departamento": ["Ventas", "Sistemas", "Ventas", "Sistemas"],
-        "Salario": [12000, 15000, 18000, 14000]
-    })
-
-    figure = generator.generate(
-        dataframe,
-        "Salario",
-        "pie",
-        group_by="Departamento",
-        agg="mean"
-    )
-
-    assert figure is not None
-
-
-def test_aggregation_with_invalid_function_raises():
-
-    generator = ChartGenerator()
-
-    dataframe = pd.DataFrame({
-        "Departamento": ["Ventas", "Sistemas"],
-        "Salario": [12000, 15000]
-    })
-
-    try:
-        generator.generate(
-            dataframe,
-            "Salario",
-            "bar",
-            group_by="Departamento",
-            agg="promedio"
-        )
-        assert False, "Debería lanzar ValueError"
-    except ValueError:
-        pass

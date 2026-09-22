@@ -41,7 +41,47 @@ class ExcelAnalyzer:
                 f"Formato no soportado: {path.suffix}"
             )
 
-        return pd.read_excel(path)
+        dataframe = pd.read_excel(path)
+
+        return self.deduplicate_columns(dataframe)
+
+    @staticmethod
+    def deduplicate_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
+        """
+        Renombra columnas duplicadas para evitar que ``dataframe[nombre]``
+        devuelva un DataFrame en lugar de una Serie (lo que rompe la
+        detección de tipos y la generación de gráficas).
+
+        Ejemplo: ["Ventas", "Ventas", "Costo"] -> ["Ventas", "Ventas_2", "Costo"]
+        """
+
+        original_names = [str(column) for column in dataframe.columns]
+
+        seen: dict[str, int] = {}
+        new_names: list[str] = []
+
+        for name in original_names:
+
+            if name not in seen:
+                seen[name] = 1
+                new_names.append(name)
+            else:
+                seen[name] += 1
+                candidate = f"{name}_{seen[name]}"
+
+                # Evitar colisión si ya existía una columna con ese nombre
+                while candidate in seen or candidate in original_names:
+                    seen[name] += 1
+                    candidate = f"{name}_{seen[name]}"
+
+                seen[candidate] = 1
+                new_names.append(candidate)
+
+        if new_names != original_names:
+            dataframe = dataframe.copy()
+            dataframe.columns = new_names
+
+        return dataframe
 
     def detect_column_type(self, series: pd.Series) -> str:
         """
@@ -91,14 +131,39 @@ class ExcelAnalyzer:
         # Texto normal
         return "text"
 
+    # Tamaño máximo de muestra usado para inferir el tipo de una columna
+    # de texto (fechas). Probar 8 formatos de fecha sobre columnas de
+    # decenas de miles de filas es costoso y no aporta precisión: basta
+    # con una muestra para decidir el formato dominante de la columna.
+    TYPE_DETECTION_SAMPLE_SIZE = 500
+
     def _looks_like_date_advanced(self, series: pd.Series, original_series: pd.Series) -> bool:
         """
         Determina si una serie parece contener fechas con validación industrial mejorada.
+
+        Nota de rendimiento: la detección del formato se hace sobre una
+        muestra (hasta `TYPE_DETECTION_SAMPLE_SIZE` valores) en vez de la
+        columna completa, ya que se prueban varios formatos de fecha por
+        columna y este método se ejecuta una vez por cada columna de texto
+        del archivo. Es un trade-off intencional: en columnas muy grandes
+        con un formato de fecha inconsistente entre el inicio y el final,
+        la muestra podría no representar el 100% de los casos, pero es
+        el mismo riesgo que ya existía en cualquier heurística basada en
+        proporciones (80%) y evita que archivos grandes tarden segundos
+        extra en analizarse.
         """
 
         # No intentamos detectar fechas en columnas numéricas
         if pd.api.types.is_numeric_dtype(original_series):
             return False
+
+        if len(series) > self.TYPE_DETECTION_SAMPLE_SIZE:
+            sample = series.sample(
+                self.TYPE_DETECTION_SAMPLE_SIZE,
+                random_state=42
+            )
+        else:
+            sample = series
 
         try:
             # Probar múltiples formatos y conservar el mejor resultado
@@ -108,7 +173,7 @@ class ExcelAnalyzer:
             for fmt in self.DATE_FORMATS:
                 try:
                     converted = pd.to_datetime(
-                        series,
+                        sample,
                         format=fmt,
                         errors="coerce"
                     )
@@ -124,7 +189,7 @@ class ExcelAnalyzer:
             # Si ninguno de los formatos básicos funciona, intentar mixed
             if best_converted is None:
                 best_converted = pd.to_datetime(
-                    series,
+                    sample,
                     format="mixed",
                     errors="coerce"
                 )
@@ -222,8 +287,10 @@ class ExcelAnalyzer:
 
     def _is_identifier(self, series: pd.Series) -> bool:
         """
-        Detecta si una columna parece un identificador/secuencia
-        (valores únicos consecutivos, p. ej. IDs, folios o índices).
+        Detecta si una columna parece un identificador/secuencia:
+        - Numérica: valores únicos consecutivos (1,2,3... o 1001,1002...).
+        - Alfanumérica: folios con prefijo fijo + número consecutivo
+          (p. ej. "FOLIO-001", "FOLIO-002" o "A1001", "A1002").
         """
 
         non_null = series.dropna()
@@ -231,8 +298,16 @@ class ExcelAnalyzer:
         if non_null.empty:
             return False
 
-        if not pd.api.types.is_numeric_dtype(non_null):
-            return False
+        if pd.api.types.is_numeric_dtype(non_null):
+            return self._is_numeric_sequence(non_null)
+
+        return self._is_alphanumeric_sequence(non_null)
+
+    def _is_numeric_sequence(self, non_null: pd.Series) -> bool:
+        """
+        Determina si una serie numérica es una secuencia consecutiva de
+        valores únicos (paso constante), típica de IDs o folios numéricos.
+        """
 
         # Todos los valores son únicos
         if non_null.nunique() != len(non_null):
@@ -254,6 +329,55 @@ class ExcelAnalyzer:
         except Exception:
             return False
 
+    def _is_alphanumeric_sequence(self, non_null: pd.Series) -> bool:
+        """
+        Determina si una columna de texto es una secuencia de folios con
+        un prefijo constante y un número incremental al final
+        (p. ej. "FOLIO-001", "FOLIO-002", "FOLIO-003").
+
+        No se aplica a columnas de tipo booleano/categórico ya filtradas
+        antes de llegar aquí; solo se invoca sobre columnas numéricas o de
+        texto (ver `analyze`).
+        """
+
+        if not pd.api.types.is_object_dtype(non_null) and not isinstance(
+            non_null.dtype, pd.StringDtype
+        ):
+            return False
+
+        # Todos los valores deben ser únicos para considerarse identificador
+        if non_null.nunique() != len(non_null):
+            return False
+
+        if len(non_null) < 2:
+            return False
+
+        text = non_null.astype(str).str.strip()
+
+        # Prefijo (cualquier texto, incluso vacío) + número al final
+        matches = text.str.extract(r"^(?P<prefix>.*?)(?P<number>\d+)$")
+
+        if matches["number"].isna().any():
+            return False
+
+        # El prefijo debe ser idéntico en todos los valores
+        if matches["prefix"].nunique() != 1:
+            return False
+
+        try:
+            numeric_part = matches["number"].astype(int)
+        except (ValueError, TypeError):
+            return False
+
+        sorted_values = numeric_part.sort_values().reset_index(drop=True)
+
+        diffs = sorted_values.diff().dropna()
+
+        if diffs.empty:
+            return False
+
+        return bool((diffs == diffs.iloc[0]).all())
+
     def analyze(self, dataframe: pd.DataFrame) -> dict:
         """
         Analiza un DataFrame y devuelve información estructurada con metadata de calidad.
@@ -274,10 +398,25 @@ class ExcelAnalyzer:
                 "total_missing": int(series.isna().sum()) + int((series == "").sum()),
                 "unique": int(series.nunique()),
                 "total": len(series),
-                "statistics": self._column_statistics(series),
+                # Las estadísticas descriptivas (promedio, mín, máx) solo
+                # tienen sentido para columnas numéricas. Calcularlas para
+                # columnas de texto/categóricas es trabajo desperdiciado y
+                # antes podía mostrar cifras espurias en columnas que no
+                # eran realmente numéricas (texto que "casi parece" numérico
+                # pero no superó el umbral de detección).
+                "statistics": (
+                    self._column_statistics(series)
+                    if column_type == "numeric"
+                    else {}
+                ),
             }
 
-            if column_type == "numeric":
+            # El badge de identificador/folio aplica a columnas numéricas
+            # (1, 2, 3...) y también a columnas de texto o categóricas,
+            # ya que un folio alfanumérico con pocos valores únicos
+            # (p. ej. 3-10 filas) puede clasificarse como "categorical"
+            # antes de caer en "text" (ver `_looks_like_categorical_advanced`).
+            if column_type in ("numeric", "text", "categorical"):
                 column_info["identifier"] = self._is_identifier(series)
 
             columns.append(column_info)

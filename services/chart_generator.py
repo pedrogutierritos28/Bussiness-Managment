@@ -34,15 +34,6 @@ class ChartGenerator:
         "Y": "Anual",
     }
 
-    # Funciones de agregación disponibles para resumir datos
-    AGG_FUNCTIONS = {
-        "count": "Conteo",
-        "sum": "Suma",
-        "mean": "Promedio",
-        "min": "Mínimo",
-        "max": "Máximo",
-    }
-
     # ============================================================
     # OBTENER GRÁFICAS COMPATIBLES
     # ============================================================
@@ -136,8 +127,6 @@ class ChartGenerator:
         period: str | None = None,
         secondary_column: str | None = None,
         nbins: int | None = None,
-        group_by: str | None = None,
-        agg: str | None = None,
     ) -> go.Figure:
         """
         Genera una gráfica utilizando la columna seleccionada.
@@ -147,10 +136,6 @@ class ChartGenerator:
           para series temporales. Si no se indica, se infiere del rango.
         - secondary_column: segunda columna numérica para dispersión (X).
         - nbins: número de barras para histogramas.
-        - group_by: columna categórica o fecha para resumir datos
-          (solo aplica a bar, line y pie).
-        - agg: función de agregación ('count', 'sum', 'mean', 'min', 'max').
-          Requiere group_by.
         """
 
         if column not in dataframe.columns:
@@ -163,16 +148,6 @@ class ChartGenerator:
                 f"La columna '{secondary_column}' no existe."
             )
 
-        if group_by and group_by not in dataframe.columns:
-            raise ValueError(
-                f"La columna de agrupación '{group_by}' no existe."
-            )
-
-        if agg and agg not in self.AGG_FUNCTIONS:
-            raise ValueError(
-                f"Función de agregación no soportada: {agg}"
-            )
-
         if chart_type not in self.CHART_TYPES:
             raise ValueError(
                 f"Tipo de gráfica no soportado: {chart_type}"
@@ -181,69 +156,12 @@ class ChartGenerator:
         series = dataframe[column]
 
         # ========================================================
-        # AGREGACIÓN OPCIONAL (resumir por columna categórica/fecha)
-        # ========================================================
-
-        aggregated = bool(group_by and agg)
-        agg_mode = False
-        value_label = column
-        x_col = column
-        y_col = column
-
-        if aggregated and chart_type in ("bar", "line", "pie"):
-            assert group_by is not None
-            assert agg is not None
-
-            # Numericizar la columna de valores antes de agregar
-            # (aunque venga como texto: separadores/notación científica)
-            numeric_col = self._as_numeric(dataframe[column])
-
-            plot_frame = dataframe.copy()
-            plot_frame[column] = numeric_col
-
-            if agg == "count":
-                plot_data = (
-                    plot_frame
-                    .groupby(group_by, dropna=False)
-                    .size()
-                    .reset_index(name="Cantidad")
-                )
-                x_col = group_by
-                y_col = "Cantidad"
-                value_label = "Cantidad"
-            else:
-                plot_data = (
-                    plot_frame
-                    .groupby(group_by, dropna=False)[column]
-                    .agg(agg)
-                    .reset_index()
-                )
-                plot_data.columns = [group_by, column]
-                x_col = group_by
-                y_col = column
-                value_label = f"{self.AGG_FUNCTIONS[agg]} de {column}"
-
-            series = plot_data[y_col]
-            agg_mode = True
-        else:
-            plot_data = dataframe
-
-        # ========================================================
         # BARRAS
         # ========================================================
 
         if chart_type == "bar":
 
-            if agg_mode:
-
-                figure = px.bar(
-                    plot_data,
-                    x=x_col,
-                    y=y_col,
-                    title=f"{value_label} por {x_col}"
-                )
-
-            elif pd.api.types.is_numeric_dtype(series):
+            if pd.api.types.is_numeric_dtype(series):
 
                 figure = px.bar(
                     dataframe,
@@ -277,17 +195,7 @@ class ChartGenerator:
 
         elif chart_type == "line":
 
-            if agg_mode:
-
-                figure = px.line(
-                    plot_data,
-                    x=x_col,
-                    y=y_col,
-                    markers=True,
-                    title=f"{value_label} por {x_col}"
-                )
-
-            elif pd.api.types.is_datetime64_any_dtype(series):
+            if pd.api.types.is_datetime64_any_dtype(series):
 
                 # Periodo configurable o inferido según el rango de datos
                 period = period or self._infer_time_period(
@@ -321,9 +229,11 @@ class ChartGenerator:
 
                 figure = px.line(
                     dataframe,
+                    x=dataframe.index + 1,
                     y=column,
                     markers=True,
-                    title=f"Evolución de {column}"
+                    title=f"Evolución de {column}",
+                    labels={"x": "Fila"}
                 )
 
         # ========================================================
@@ -332,34 +242,23 @@ class ChartGenerator:
 
         elif chart_type == "pie":
 
-            if agg_mode:
+            counts = (
+                series
+                .value_counts()
+                .reset_index()
+            )
 
-                figure = px.pie(
-                    plot_data,
-                    names=x_col,
-                    values=y_col,
-                    title=f"{value_label} por {x_col}"
-                )
+            counts.columns = [
+                column,
+                "Cantidad"
+            ]
 
-            else:
-
-                counts = (
-                    series
-                    .value_counts()
-                    .reset_index()
-                )
-
-                counts.columns = [
-                    column,
-                    "Cantidad"
-                ]
-
-                figure = px.pie(
-                    counts,
-                    names=column,
-                    values="Cantidad",
-                    title=f"Distribución de {column}"
-                )
+            figure = px.pie(
+                counts,
+                names=column,
+                values="Cantidad",
+                title=f"Distribución de {column}"
+            )
 
         # ========================================================
         # HISTOGRAMA
@@ -418,10 +317,10 @@ class ChartGenerator:
                 y_series = self._as_numeric(series)
 
                 figure = px.scatter(
-                    x=dataframe.index,
+                    x=dataframe.index + 1,
                     y=y_series,
                     title=f"Dispersión de {column}",
-                    labels={"x": "Índice", "y": column}
+                    labels={"x": "Fila", "y": column}
                 )
 
         else:
