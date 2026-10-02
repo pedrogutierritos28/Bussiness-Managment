@@ -562,3 +562,110 @@ body {
         transform: translateX(24px);
     }
 }
+
+
+/* ============================================================
+   PANTALLA DE INICIO (home)
+   ============================================================ */
+
+.home-container {
+    padding: 24px;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+/* Cuadrícula de tarjetas: 2-3 por fila en desktop, 1 en móvil.
+   El contenedor es un wrapper neutro para que también sirva a las
+   pantallas de mensaje (lector / rol desconocido). */
+.home-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+    margin-top: 32px;
+}
+
+/* Mensaje centrado para roles sin acciones (lector, rol desconocido). */
+.home-message {
+    max-width: 520px;
+    margin: 64px auto 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    text-align: center;
+}
+
+/* Regla BASE de la tarjeta: los botones traen estilos por defecto del
+   navegador (fondo gris, borde feo), así que se restauran fondo/borde/
+   tipografía del sistema visual propio. */
+.home-card {
+    width: 100%;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 36px 28px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+    transition: box-shadow 0.15s ease, border-color 0.15s ease,
+                transform 0.15s ease;
+}
+
+.home-card h3 {
+    margin: 0;
+}
+
+/* El hover es una regla APARTE que solo cambia lo que varía al pasar
+   el mouse; la base ya está en .home-card. */
+.home-card:hover {
+    border-color: #9ca3af;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+}
+
+/* Tarjetas "Próximamente": deshabilitadas. */
+.home-card:disabled {
+    cursor: not-allowed;
+    opacity: 0.75;
+}
+
+.home-card:disabled:hover {
+    transform: none;
+    border-color: #e5e7eb;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+.proximo {
+    margin: 0;
+    padding: 8px 14px;
+    border-radius: 10px;
+    background: #fef3c7;
+    color: #78350f;
+    font-size: 13px;
+}
+
+/* Botón de texto discreto (acceso del lector a archivos compartidos). */
+.home-inline-link {
+    height: 42px;
+    padding: 0 18px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: white;
+    color: #374151;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.home-inline-link:hover {
+    background: #f9fafb;
+    border-color: #9ca3af;
+}
