@@ -60,6 +60,8 @@ from components.analyzer import analyzer_layout  # noqa: F401
 # el callback de autenticación: arranca mostrando el login y, tras validar
 # credenciales, intercambia su contenido por la vista del analizador.
 
+server = app.server
+
 app.layout = html.Div(
     [
         html.Div(id="app-container", children=login_layout()),
