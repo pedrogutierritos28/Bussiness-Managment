@@ -51,3 +51,4 @@ websockets==17.1
 Werkzeug==3.1.8
 xlrd==2.0.2
 zipp==4.1.0
+gunicorn==23.0.0
